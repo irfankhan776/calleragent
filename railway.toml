@@ -1,0 +1,49 @@
+[build]
+builder = "nixpacks"
+
+# ─── BACKEND SERVICE ──────────────────────────────────────
+[[services]]
+name = "backend"
+source = "backend"
+
+[services.build]
+buildCommand = "pip install -r requirements.txt"
+
+[services.deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+healthcheckInterval = 10
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+# ─── DASHBOARD SERVICE ─────────────────────────────────────
+[[services]]
+name = "dashboard"
+source = "dashboard"
+
+[services.build]
+buildCommand = "npm install && npm run build"
+
+[services.deploy]
+startCommand = "npx serve dist -p $PORT"
+healthcheckTimeout = 10
+healthcheckInterval = 15
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# ─── AGENT WORKER SERVICE ─────────────────────────────────
+[[services]]
+name = "agent"
+source = "agent"
+
+[services.build]
+buildCommand = "pip install -r requirements.txt"
+
+[services.deploy]
+startCommand = "python worker.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+healthcheckInterval = 15
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
