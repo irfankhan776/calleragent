@@ -264,9 +264,36 @@ async def make_call(
     call_id = str(uuid.uuid4())
     log.info(f"[{call_id[:8]}] Starting call for {business_name} ({phone_number})")
 
-    simulate = dry_run or not PIPECAT_AVAILABLE or not os.environ.get("TELNYX_API_KEY")
+    # Determine mode
+    telnyx_key = os.environ.get("TELNYX_API_KEY")
+    telnyx_conn = os.environ.get("TELNYX_CONNECTION_ID")
+    telnyx_from = os.environ.get("TELNYX_FROM_NUMBER")
+    pipecat_ok = PIPECAT_AVAILABLE
+    want_live = not dry_run
 
-    if simulate:
+    is_simulation = (
+        dry_run
+        or not pipecat_ok
+        or not telnyx_key
+        or not telnyx_conn
+        or not telnyx_from
+    )
+
+    if want_live and is_simulation:
+        # Be explicit about WHY simulation is active — this is the most common bug.
+        reasons = []
+        if dry_run:                  reasons.append("dry_run=True")
+        if not pipecat_ok:           reasons.append("pipecat not installed")
+        if not telnyx_key:          reasons.append("TELNYX_API_KEY missing")
+        if not telnyx_conn:          reasons.append("TELNYX_CONNECTION_ID missing")
+        if not telnyx_from:          reasons.append("TELNYX_FROM_NUMBER missing")
+        log.warning(
+            f"[{call_id[:8]}] ⚠️  LIVE mode requested but running SIMULATION. "
+            f"Reason(s): {', '.join(reasons)}. Set the missing vars in Railway → "
+            f"agent variables to enable real calls."
+        )
+
+    if is_simulation:
         log.info(f"[{call_id[:8]}] SIMULATION mode active")
         await asyncio.sleep(random.uniform(1.5, 3.0))
         transcript, outcome, duration = generate_mock_call(business_name, business_type)

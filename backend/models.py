@@ -12,6 +12,8 @@ class JobStatus(str, Enum):
 
 
 class CallJob(SQLModel, table=True):
+    __tablename__ = "call_jobs"  # explicit table name avoids collision with "calljob" singular
+
     id: str = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: Optional[datetime] = Field(default=None)
@@ -26,6 +28,11 @@ class CallJob(SQLModel, table=True):
     outcome: Optional[str] = Field(default=None)
     error_message: Optional[str] = Field(default=None)
     notes: Optional[str] = Field(default=None)
+    # Store raw CSV content directly in the DB so the agent can read it
+    # without needing filesystem access between containers.
+    csv_content: Optional[str] = Field(default=None, sa_column_kwargs={"nullable": True})
+    # Per-call results so the UI can show step-by-step progress
+    call_results: Optional[str] = Field(default=None, sa_column_kwargs={"nullable": True})
 
 
 class Call(SQLModel, table=True):

@@ -165,26 +165,27 @@ async def upload_csv(
     if "name" not in header or "phone" not in header or "type" not in header:
         raise HTTPException(status_code=400, detail="CSV must contain name, phone, and type columns")
 
-    # Save CSV to disk
+    # Also save to disk for local dev convenience (not used in production)
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     csv_path = os.path.join(root_dir, "businesses.csv")
-
     with open(csv_path, "w", encoding="utf-8") as f:
         f.write(content_str)
 
     csv_lines = [l for l in lines[1:] if l.strip()]
     row_count = len(csv_lines)
 
-    # Create a job using a new session
+    # Store CSV content directly in the job record so the agent can fetch it
+    # regardless of whether it shares a filesystem with the backend.
     job_id = str(uuid.uuid4())
     with Session(engine) as db_session:
         job = CallJob(
             id=job_id,
             business_name="BATCH_IMPORT",
-            phone_number=csv_path,
+            phone_number=f"job:{job_id}",  # markers the job source
             business_type=f"{row_count} businesses",
             dry_run=dry_run,
             limit=limit,
+            csv_content=content_str,  # agent fetches this via /jobs/{id}/csv
         )
         db_session.add(job)
         db_session.commit()

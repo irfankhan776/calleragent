@@ -68,8 +68,15 @@ export function App() {
     }
   };
 
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    setFilter('search', '');
+    setFilter('outcome', '');
+    setFilter('date', '');
+    setPage(0);
+  };
+
   const handleDialerInitiated = () => {
-    // Refetch data when a CSV batch dial starts
     refetchStats();
     refetchCalls();
   };
@@ -123,7 +130,7 @@ export function App() {
           <div className="flex flex-col gap-2">
             {/* Tab 1: Dashboard */}
             <button
-              onClick={() => setActiveTab('dashboard')}
+              onClick={() => handleTabChange('dashboard')}
               title="Dashboard Overview"
               className={`p-2.5 rounded-lg border transition-all duration-200 ${
                 activeTab === 'dashboard'
@@ -136,7 +143,7 @@ export function App() {
             
             {/* Tab 2: Calls */}
             <button
-              onClick={() => setActiveTab('calls')}
+              onClick={() => handleTabChange('calls')}
               title="Call Log"
               className={`p-2.5 rounded-lg border transition-all duration-200 ${
                 activeTab === 'calls'
@@ -149,7 +156,7 @@ export function App() {
 
             {/* Tab 3: Analytics */}
             <button
-              onClick={() => setActiveTab('analytics')}
+              onClick={() => handleTabChange('analytics')}
               title="Analytics"
               className={`p-2.5 rounded-lg border transition-all duration-200 ${
                 activeTab === 'analytics'
@@ -163,7 +170,7 @@ export function App() {
 
           {/* Tab 4: Settings */}
           <button
-            onClick={() => setActiveTab('settings')}
+            onClick={() => handleTabChange('settings')}
             title="Settings"
             className={`p-2.5 rounded-lg border transition-all duration-200 ${
               activeTab === 'settings'

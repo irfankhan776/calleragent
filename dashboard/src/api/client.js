@@ -69,19 +69,24 @@ export const api = {
   postCSV: async (file, limit = null, dryRun = false) => {
     const formData = new FormData();
     formData.append('file', file);
-    
+
     const params = {};
     if (limit !== null) params.limit = limit;
     if (dryRun) params.dry_run = true;
-    
+
     const response = await client.post('/calls/upload', formData, {
       params,
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
-    
+
     showToast('CSV uploaded and auto-dialer started!', 'success');
+    return response.data;
+  },
+
+  getJobStatus: async (jobId) => {
+    const response = await client.get(`/jobs/${jobId}/status`);
     return response.data;
   }
 };
