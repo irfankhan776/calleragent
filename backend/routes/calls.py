@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import json
 import httpx
@@ -248,7 +249,9 @@ async def upload_csv(
         raise HTTPException(status_code=400, detail="CSV file is empty")
 
     header = lines[0].lower()
-    if "name" not in header or "phone" not in header or "type" not in header:
+    # Normalise: strip quotes and whitespace before checking for required columns
+    normalized_header = re.sub(r'["\']', '', header)
+    if "name" not in normalized_header or "phone" not in normalized_header or "type" not in normalized_header:
         raise HTTPException(status_code=400, detail="CSV must contain name, phone, and type columns")
 
     csv_lines = [l for l in lines[1:] if l.strip()]
