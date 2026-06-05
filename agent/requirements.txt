@@ -7,11 +7,11 @@ uvicorn[standard]==0.32.1
 python-dotenv==1.0.1
 
 # HTTP client
-httpx==0.27.0
+httpx>=0.28.1,<1.0.0
 aiohttp==3.11.13
 
 # Speech-to-Text (v6 WebSocket API — AsyncDeepgramClient)
-deepgram>=3.0.0
+deepgram-sdk>=3.0.0
 
 # Text-to-Speech
 elevenlabs>=1.0.0
