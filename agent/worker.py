@@ -84,13 +84,18 @@ async def report_call_result(client: httpx.AsyncClient, job_id: str, step: int, 
             f"{BACKEND_URL}/jobs/{job_id}/results",
             json={
                 "step": step,
+                "type": result.get("type", "call"),
+                "level": result.get("level", "info"),
                 "business_name": result.get("business_name", ""),
                 "phone_number": result.get("phone_number", ""),
                 "business_type": result.get("business_type", ""),
                 "status": result.get("status", "unknown"),
                 "outcome": result.get("outcome", ""),
                 "error": result.get("error", ""),
+                "title": result.get("title", ""),
+                "detail": result.get("detail", ""),
                 "note": result.get("note", ""),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             },
             timeout=API_TIMEOUT,
         )
@@ -131,8 +136,17 @@ async def process_batch_job(client: httpx.AsyncClient, job: dict):
     job_id = job["id"]
     dry_run = job.get("dry_run", False)
     limit = job.get("limit")
+    failures = 0
+    initiated = 0
 
     log.info(f"[Job {job_id[:8]}] Starting batch — dry_run={dry_run}, limit={limit}")
+    await report_call_result(client, job_id, 0, {
+        "type": "event",
+        "level": "info",
+        "status": "worker_claimed",
+        "title": "Worker claimed campaign",
+        "detail": f"Worker picked up job {job_id[:8]} and started processing.",
+    })
 
     # ── 1. Fetch CSV from backend ────────────────────────────────────────────
     try:
@@ -142,6 +156,14 @@ async def process_batch_job(client: httpx.AsyncClient, job: dict):
         csv_content = resp.json().get("csv_content", "")
     except Exception as e:
         log.error(f"[Job {job_id[:8]}] Failed to fetch CSV: {e}")
+        await report_call_result(client, job_id, 0, {
+            "type": "event",
+            "level": "error",
+            "status": "failed",
+            "title": "Failed to fetch CSV",
+            "detail": str(e),
+            "error": str(e),
+        })
         await patch_job(client, job_id, status="failed",
             completed_at=datetime.now(timezone.utc).isoformat(),
             error_message=f"CSV fetch failed: {e}")
@@ -168,31 +190,53 @@ async def process_batch_job(client: httpx.AsyncClient, job: dict):
         businesses = businesses[:limit]
 
     if not businesses:
-        await patch_job(client, job_id, status="completed",
+        await report_call_result(client, job_id, 0, {
+            "type": "event",
+            "level": "error",
+            "status": "failed",
+            "title": "No valid rows to call",
+            "detail": "CSV parsed successfully but no valid business rows were found.",
+            "error": "CSV empty or no valid rows",
+        })
+        await patch_job(client, job_id, status="failed",
             completed_at=datetime.now(timezone.utc).isoformat(),
-            notes="CSV empty or no valid rows")
+            error_message="CSV empty or no valid rows")
         return
 
     await patch_job(client, job_id, status="running",
-        started_at=datetime.now(timezone.utc).isoformat())
+        started_at=datetime.now(timezone.utc).isoformat(),
+        notes=f"Processing {len(businesses)} business(es)")
+    await report_call_result(client, job_id, 0, {
+        "type": "event",
+        "level": "info",
+        "status": "running",
+        "title": "Campaign running",
+        "detail": f"Starting {len(businesses)} call attempt(s).",
+    })
 
     # ── 3. Trigger calls ────────────────────────────────────────────────────
     for i, biz in enumerate(businesses, start=1):
         log.info(f"[{i}/{len(businesses)}] Triggering call to {biz['name']} at {biz['phone']}...")
         call_result = {
+            "type": "call",
+            "level": "info",
             "business_name": biz["name"],
             "phone_number": biz["phone"],
             "business_type": biz["type"],
             "status": "unknown",
             "outcome": "",
             "error": "",
+            "title": f"Call attempt #{i}",
+            "detail": "",
             "note": "",
         }
         try:
             if dry_run:
                 log.info(f"  [dry_run] Would call {biz['phone']} — skipping Telnyx")
+                initiated += 1
                 call_result["status"] = "simulated"
                 call_result["outcome"] = "Dry run — no real call placed"
+                call_result["detail"] = f"Simulation only for {biz['name']}"
                 call_result["note"] = f"DRY RUN: {biz['name']} at {biz['phone']} ({biz['type']})"
             else:
                 result = await trigger_outbound_call(
@@ -201,23 +245,47 @@ async def process_batch_job(client: httpx.AsyncClient, job: dict):
                     phone_number=biz["phone"],
                     business_type=biz["type"],
                 )
+                initiated += 1
                 log.info(f"  -> call_initiated: {result.get('call_control_id', 'unknown')}")
                 call_result["status"] = "initiated"
                 call_result["outcome"] = "Call initiated"
+                call_result["detail"] = f"Agent accepted outbound call request for {biz['phone']}"
                 call_result["note"] = f"Call control ID: {result.get('call_control_id', 'N/A')}"
         except Exception as e:
+            failures += 1
             log.error(f"  -> Failed to trigger call: {e}")
+            call_result["level"] = "error"
             call_result["status"] = "error"
             call_result["error"] = str(e)
+            call_result["detail"] = str(e)
             call_result["note"] = f"FAILED: {e}"
 
         await report_call_result(client, job_id, i, call_result)
         await asyncio.sleep(2)
 
-    await patch_job(client, job_id, status="completed",
+    final_status = "completed"
+    final_error = None
+    final_notes = f"Batch done. {initiated} initiated/simulated, {failures} failed."
+
+    if failures == len(businesses):
+        final_status = "failed"
+        final_error = "All call attempts failed before a call could be started."
+    elif failures > 0:
+        final_notes += " Some calls failed — review error log below."
+
+    await report_call_result(client, job_id, 999999, {
+        "type": "event",
+        "level": "error" if final_status == "failed" else "info",
+        "status": final_status,
+        "title": "Campaign finished",
+        "detail": final_error or final_notes,
+        "error": final_error or "",
+    })
+    await patch_job(client, job_id, status=final_status,
         completed_at=datetime.now(timezone.utc).isoformat(),
-        notes=f"Batch done. {len(businesses)} call(s) processed.")
-    log.info(f"[Job {job_id[:8]}] Batch completed.")
+        notes=final_notes,
+        error_message=final_error)
+    log.info(f"[Job {job_id[:8]}] Batch completed with status={final_status}.")
 
 
 # ── Main Loop ─────────────────────────────────────────────────────────────────

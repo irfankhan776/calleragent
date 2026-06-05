@@ -28,7 +28,14 @@ client.interceptors.response.use(
   (error) => {
     let msg = 'An unexpected error occurred';
     if (error.response) {
-      msg = error.response.data?.detail || `Server returned error (${error.response.status})`;
+      const detail = error.response.data?.detail;
+      if (typeof detail === 'string') {
+        msg = detail;
+      } else if (detail?.message) {
+        msg = detail.message;
+      } else {
+        msg = `Server returned error (${error.response.status})`;
+      }
     } else if (error.request) {
       msg = 'No response received from server. Check your backend status.';
     } else {
