@@ -12,31 +12,42 @@ An AI-powered cold calling system with a real-time voice agent, live dashboard, 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                          RAILWAY CLOUD                           │
-│                                                                  │
-│   ┌──────────┐   ┌──────────────┐   ┌───────────────────────┐   │
-│   │ BACKEND  │───│  PostgreSQL  │   │  RECORDINGS (volume)  │   │
-│   │ FastAPI  │   │  (persistent)│   └───────────────────────┘   │
-│   │  :8000   │   └──────────────┘                               │
-│   └────┬─────┘                                                  │
-│        │                                                         │
-│   ┌────▼─────┐               ┌──────────────────────────────┐  │
-│   │DASHBOARD │               │  AGENT WORKER (background)    │  │
-│   │  React   │               │  polls job queue → makes calls│  │
-│   │  :3000   │               │  Pipecat + Telnyx + Gemini   │  │
-│   └──────────┘               └──────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
+Railway Cloud
+│
+├── backend/  FastAPI + PostgreSQL  :8000
+│   └── /calls /stats /jobs  (system of record)
+│
+├── dashboard/  React + Tailwind    :3000
+│   └── Uploads CSV, monitors calls, shows analytics
+│
+├── agent-worker/  (background poller)
+│   └── polls /jobs/claim  →  POST /start  →  agent-web
+│
+└── agent-web/  FastAPI + realtime voice pipeline
+    └── POST /start  →  Telnyx TeXML  →  outbound call
+        GET  /answer →  Telnyx fetches TeXML
+        WS   /ws/{id} →  Telnyx streams audio ↔ AI pipeline
+            Deepgram STT → Gemini Realtime → ElevenLabs TTS
+            → back to Telnyx → callee's phone
 ```
+
+### Voice Pipeline (per call)
+
+```
+Telnyx RTP (8kHz ulaw)  →  WebSocket  →  Deepgram STT (nova-2)
+    →  Gemini Realtime (gemini-2.0-flash-exp)  →  ElevenLabs TTS
+    →  back through WebSocket  →  Telnyx  →  callee
+```
+
+All call results (transcript, outcome, duration) POSTed to `/calls` on the backend.
 
 ---
 
 ## Features
 
-- **AI Voice Agent (Mia)** — Real-time phone calls using Pipecat, Telnyx WebRTC, Deepgram STT, ElevenLabs TTS, and Google Gemini
-- **Live Dashboard** — Real-time call monitoring, outcome tracking, sentiment analysis, and analytics
+- **AI Voice Agent (Mia)** — Realtime phone calls using direct Telnyx WebSocket streaming, Deepgram STT, ElevenLabs TTS, and Google Gemini Realtime API
+- **Live Dashboard** — Realtime call monitoring, outcome tracking, sentiment analysis, and analytics
 - **Batch Dialer** — Upload a CSV of businesses, Mia calls them one by one automatically
-- **Simulation Mode** — Works without API keys for testing (generates realistic mock conversations)
 - **Job Queue** — Reliable background processing via database-backed job queue
 - **Recording Storage** — All calls are saved as WAV files and playable in the dashboard
 
@@ -46,8 +57,8 @@ An AI-powered cold calling system with a real-time voice agent, live dashboard, 
 
 | Layer | Technology |
 |-------|-----------|
-| Voice AI | Pipecat, Deepgram STT, ElevenLabs TTS, Google Gemini, Silero VAD |
-| Telephony | Telnyx WebRTC |
+| Voice AI | Deepgram STT (nova-2), ElevenLabs TTS, Google Gemini Realtime |
+| Telephony | Telnyx WebSocket media streaming (TeXML outbound, RTP bidirectional) |
 | Backend | FastAPI, SQLModel, PostgreSQL, Uvicorn |
 | Frontend | React 18, Tailwind CSS, React Query, Vite |
 | Deployment | Railway, Docker, Docker Compose |
@@ -156,18 +167,20 @@ Sunset Restaurant,+12025551122,restaurant
 
 ## Railway Deployment
 
+Railway deploys **4 services** from this repo. Each has exactly one responsibility.
+
 ### Step 1 — Connect GitHub
 
 1. Go to [railway.app](https://railway.app) and create a new project
 2. Connect your GitHub repo containing the `smartreception/` directory
-3. Railway will auto-detect all three services from `railway.toml`
+3. Railway will auto-detect all four services from `railway.toml`
 
 ### Step 2 — Provision PostgreSQL
 
 1. Add a PostgreSQL plugin to your Railway project
 2. Railway auto-injects `DATABASE_URL` — no configuration needed
 
-### Step 3 — Deploy Backend First
+### Step 3 — Deploy Backend
 
 1. Deploy the **backend** service
 2. Note the Railway public URL (e.g. `https://smartreception-backend.up.railway.app`)
@@ -187,30 +200,53 @@ DATABASE_URL=<auto-injected>
 
 ### Step 5 — Deploy Agent Worker
 
-1. Set the following in the agent service:
+Set the following in the **agent-worker** service variables:
 
 ```
 BACKEND_URL=https://your-backend-url.up.railway.app
-AGENT_URL=https://your-agent-url.up.railway.app
+AGENT_URL=https://your-agent-web-url.up.railway.app
 AGENT_POLL_INTERVAL=10
-GOOGLE_API_KEY=<your key>
-DEEPGRAM_API_KEY=<your key>
-ELEVENLABS_API_KEY=<your key>
-ELEVENLABS_VOICE_ID=<your voice id>
-TELNYX_API_KEY=<your key>
-TELNYX_ACCOUNT_SID=<your Telnyx account SID>
-TELNYX_APPLICATION_SID=<your TeXML application SID>
-TELNYX_CONNECTION_ID=<your connection id>
-TELNYX_FROM_NUMBER=+1XXXXXXXXXX
 ```
 
-2. Deploy the **agent** service
+Start command: `python worker.py`
 
-### Step 6 — Persistent Storage
+Do **not** assign a public domain to this service. It is a background poller, not an HTTP server.
+
+### Step 6 — Deploy Agent Web (with public domain)
+
+Set the following in the **agent-web** service variables:
+
+```
+AGENT_URL=https://your-agent-web-url.up.railway.app
+GOOGLE_API_KEY=<your Gemini key>
+DEEPGRAM_API_KEY=<your Deepgram key>
+ELEVENLABS_API_KEY=<your ElevenLabs key>
+ELEVENLABS_VOICE_ID=<your voice id>
+TELNYX_API_KEY=<your Telnyx key>
+TELNYX_ACCOUNT_SID=<your Telnyx account SID>
+TELNYX_APPLICATION_SID=<your TeXML application SID>
+TELNYX_FROM_NUMBER=+1XXXXXXXXXX
+BACKEND_URL=https://your-backend-url.up.railway.app
+```
+
+Start command: `uvicorn server:app --host 0.0.0.0 --port $PORT`
+
+**Important:** Assign a public HTTPS domain to this service in Railway. Telnyx needs to connect to it.
+
+### Step 7 — Persistent Storage
 
 In Railway, add a **persistent volume** to the backend service:
 - Mount path: `/app/recordings`
 - Size: 1 GB (recommended)
+
+### Service Summary
+
+| Service | Start Command | Public Domain | Purpose |
+|---------|---------------|---------------|---------|
+| backend | `uvicorn main:app ...` | Yes | REST API, DB, recordings |
+| dashboard | `npx serve dist ...` | Yes | React UI |
+| agent-worker | `python worker.py` | No | Job queue poller |
+| agent-web | `uvicorn server:app ...` | **Yes** | Telephony + AI voice |
 
 ---
 
@@ -239,16 +275,16 @@ In Railway, add a **persistent volume** to the backend service:
 
 ```
 smartreception/
-├── railway.toml           # Railway deployment config
+├── railway.toml           # Railway deployment (4 services)
 ├── docker-compose.yml     # Local full-stack deployment
 ├── .env.example           # Environment variables template
 ├── .gitignore
 │
-├── backend/               # FastAPI REST API
+├── backend/               # FastAPI REST API + PostgreSQL
 │   ├── main.py           # App entry, CORS, routing
 │   ├── database.py       # SQLModel + PostgreSQL/SQLite
 │   ├── models.py         # Call & CallJob SQLModel tables
-│   ├── sentiment.py      # Keyword-based sentiment detection
+│   ├── sentiment.py       # Keyword-based sentiment detection
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── routes/
@@ -259,7 +295,7 @@ smartreception/
 │
 ├── dashboard/             # React frontend
 │   ├── src/
-│   │   ├── App.jsx      # Main app + tab navigation
+│   │   ├── App.jsx       # Main app + tab navigation
 │   │   ├── api/client.js # Axios API client
 │   │   ├── hooks/        # React Query hooks
 │   │   └── components/   # UI components
@@ -268,13 +304,15 @@ smartreception/
 │   └── Dockerfile
 │
 └── agent/                 # Voice AI calling agent
-    ├── worker.py         # Background job queue worker
-    ├── main.py           # Pipecat pipeline + call logic
-    ├── webhooks.py       # Backend API integration
+    ├── worker.py         # Background job queue poller
+    ├── server.py         # FastAPI web server (replaces Pipecat)
+    ├── runtime.py         # Realtime voice pipeline: Deepgram + Gemini + ElevenLabs
+    ├── main.py           # Local CLI script only (NOT deployed)
+    ├── webhooks.py       # Backend API integration helpers
     ├── pitch.py          # AI sales script (Mia)
-    ├── call_runner.py    # CLI batch dialer
-    ├── requirements.txt
-    └── Dockerfile
+    ├── call_runner.py    # Local batch CLI runner
+    ├── requirements.txt  # Direct deps: deepgram, elevenlabs, google-genai
+    └── Dockerfile         # Used by both agent-worker and agent-web services
 ```
 
 ---
@@ -328,9 +366,10 @@ Set `CORS_ORIGIN=*` in Railway backend variables, or set it to the exact dashboa
 Attach a persistent volume to the backend service at `/app/recordings`.
 
 ### Calls are robotic/slow
-- Use `gemini-2.0-flash-live` for real-time calls (not `gemini-2.5-flash`)
+- Use `gemini-2.0-flash-exp` for realtime calls
 - Ensure `interim_results=False` in Deepgram STT
 - Try a higher-quality ElevenLabs voice
+- Check network latency between Railway and Telnyx
 
 ### Database errors on startup
 Wait for PostgreSQL to fully initialize. The backend retries connecting automatically. If using SQLite locally, ignore PostgreSQL errors.

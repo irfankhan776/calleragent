@@ -14,4 +14,5 @@ COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "worker.py"]
+# This Dockerfile is used for the agent-web service.
+# Start command in Railway: uvicorn server:app --host 0.0.0.0 --port $PORT

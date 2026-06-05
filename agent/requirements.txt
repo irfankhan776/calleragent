@@ -1,7 +1,23 @@
-pipecat-ai[google,deepgram,elevenlabs,telnyx,silero]==0.0.58
-python-dotenv==1.0.1
-httpx==0.27.0
-aiohttp~=3.11.13
+# SmartReception Agent — Requirements
+# Direct Telnyx + Deepgram + Gemini + ElevenLabs (no Pipecat)
+
+# Web framework
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
+python-dotenv==1.0.1
+
+# HTTP client
+httpx==0.27.0
+aiohttp==3.11.13
+
+# Speech-to-Text (v6 WebSocket API — AsyncDeepgramClient)
+deepgram>=3.0.0
+
+# Text-to-Speech
+elevenlabs>=1.0.0
+
+# LLM — Gemini Realtime API
+google-genai>=0.8.0
+
+# Logging
 loguru==0.7.3

@@ -33,15 +33,37 @@ restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
 # ─── AGENT WORKER SERVICE ─────────────────────────────────
+# Background poller: claims jobs from backend, fires outbound calls via agent-web.
+# Does NOT serve HTTP. No public domain needed.
 [[services]]
-name = "agent"
+name = "agent-worker"
 source = "agent"
 
 [services.build]
 buildCommand = "pip install -r requirements.txt"
 
 [services.deploy]
+# worker.py is the ONLY entrypoint for this service
 startCommand = "python worker.py"
+healthcheckTimeout = 30
+healthcheckInterval = 15
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+# ─── AGENT WEB SERVICE ────────────────────────────────────
+# Public web service: handles /start, /answer, /ws for Telnyx.
+# This is the service that needs a public HTTPS domain.
+# Shares the same agent/ source but runs server.py as a web process.
+[[services]]
+name = "agent-web"
+source = "agent"
+
+[services.build]
+buildCommand = "pip install -r requirements.txt"
+
+[services.deploy]
+# server.py runs the FastAPI web app with /start, /answer, /ws endpoints
+startCommand = "uvicorn server:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 healthcheckInterval = 15
