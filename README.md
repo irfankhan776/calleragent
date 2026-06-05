@@ -191,12 +191,15 @@ DATABASE_URL=<auto-injected>
 
 ```
 BACKEND_URL=https://your-backend-url.up.railway.app
+AGENT_URL=https://your-agent-url.up.railway.app
 AGENT_POLL_INTERVAL=10
 GOOGLE_API_KEY=<your key>
 DEEPGRAM_API_KEY=<your key>
 ELEVENLABS_API_KEY=<your key>
 ELEVENLABS_VOICE_ID=<your voice id>
 TELNYX_API_KEY=<your key>
+TELNYX_ACCOUNT_SID=<your Telnyx account SID>
+TELNYX_APPLICATION_SID=<your TeXML application SID>
 TELNYX_CONNECTION_ID=<your connection id>
 TELNYX_FROM_NUMBER=+1XXXXXXXXXX
 ```
