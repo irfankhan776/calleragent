@@ -1,12 +1,21 @@
 import axios from 'axios';
 
-// Resolve base URL: check environment variable or fallback to Vite proxy prefix
+const PROD_API_ORIGIN = 'https://calleragent-production-cebe.up.railway.app';
+
+const isHtmlDocument = (value) => typeof value === 'string' && /<!doctype html>|<html[\s>]/i.test(value);
+
+// Resolve base URL: prefer explicit environment configuration, use a safe production fallback on Railway, and keep the local proxy for development.
 const getBaseUrl = () => {
-  let url = import.meta.env.VITE_API_BASE_URL;
-  if (!url) {
-    return '/api'; // fallback to vite proxy
+  const envUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (envUrl) {
+    return envUrl.replace(/\/$/, '');
   }
-  return url.replace(/\/$/, ''); // strip trailing slash
+
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('railway.app')) {
+    return PROD_API_ORIGIN;
+  }
+
+  return '/api';
 };
 
 const client = axios.create({
@@ -24,17 +33,30 @@ export const showToast = (message, type = 'info') => {
 
 // Response interceptor for error handling
 client.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (isHtmlDocument(response.data)) {
+      const requestUrl = response?.request?.responseURL || response?.config?.url || 'unknown URL';
+      const error = new Error(`API misconfiguration: received HTML instead of JSON from ${requestUrl}.`);
+      error.response = response;
+      throw error;
+    }
+    return response;
+  },
   (error) => {
     let msg = 'An unexpected error occurred';
     if (error.response) {
-      const detail = error.response.data?.detail;
-      if (typeof detail === 'string') {
-        msg = detail;
-      } else if (detail?.message) {
-        msg = detail.message;
+      if (isHtmlDocument(error.response.data)) {
+        const requestUrl = error.response?.request?.responseURL || error.response?.config?.url || 'unknown URL';
+        msg = `Dashboard API is misconfigured: ${requestUrl} returned HTML instead of JSON.`;
       } else {
-        msg = `Server returned error (${error.response.status})`;
+        const detail = error.response.data?.detail;
+        if (typeof detail === 'string') {
+          msg = detail;
+        } else if (detail?.message) {
+          msg = detail.message;
+        } else {
+          msg = `Server returned error (${error.response.status})`;
+        }
       }
     } else if (error.request) {
       msg = 'No response received from server. Check your backend status.';
