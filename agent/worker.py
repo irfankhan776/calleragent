@@ -38,6 +38,9 @@ AGENT_URL    = os.environ.get("AGENT_URL", "").rstrip("/")    # agent server bas
 POLL_INTERVAL = int(os.environ.get("AGENT_POLL_INTERVAL", "10"))
 API_TIMEOUT   = 30.0
 
+if AGENT_URL and not AGENT_URL.startswith(("http://", "https://")):
+    AGENT_URL = f"https://{AGENT_URL}"
+
 if not BACKEND_URL:
     log.error("BACKEND_URL is not set! Set it in Railway → agent variables.")
     sys.exit(1)
@@ -59,7 +62,15 @@ async def claim_job(client: httpx.AsyncClient) -> dict | None:
     try:
         resp = await client.post(f"{BACKEND_URL}/jobs/claim", timeout=API_TIMEOUT)
         if resp.status_code == 200:
-            return resp.json()
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                log.error(f"Claim response was not a JSON object: {payload!r}")
+                return None
+            job_id = payload.get("id")
+            if not job_id:
+                log.error(f"Claim response missing id: {payload}")
+                return None
+            return payload
         if resp.status_code == 204:
             return None
         log.warning(f"Unexpected claim response: {resp.status_code} {resp.text}")
@@ -296,7 +307,12 @@ async def worker_loop():
         while True:
             job = await claim_job(client)
             if job:
-                log.info(f"Claimed job: {job['id']}")
+                job_id = job.get("id")
+                if not job_id:
+                    log.error(f"Skipping claimed job with missing id: {job}")
+                    await asyncio.sleep(POLL_INTERVAL)
+                    continue
+                log.info(f"Claimed job: {job_id}")
                 await process_batch_job(client, job)
             else:
                 await asyncio.sleep(POLL_INTERVAL)

@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session, select
 from typing import Optional
 import json
@@ -21,13 +21,23 @@ def claim_job(session: Session = Depends(get_session)):
     ).first()
 
     if not job:
-        return {"status": 204}
+        return Response(status_code=204)
 
     job.status = JobStatus.RUNNING.value
     session.add(job)
     session.commit()
     session.refresh(job)
-    return job
+    return {
+        "id": job.id,
+        "status": job.status,
+        "dry_run": job.dry_run,
+        "limit": job.limit,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "notes": job.notes,
+        "error_message": job.error_message,
+    }
 
 
 @router.patch("/{job_id}")
