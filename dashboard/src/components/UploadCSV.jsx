@@ -8,6 +8,10 @@ import api from '../api/client';
 const MAX_LOG_ENTRIES = 200;
 
 const nowStamp = () => new Date().toLocaleTimeString();
+const formatJobLabel = (value) => {
+  if (!value) return 'unknown';
+  return String(value).slice(0, 8);
+};
 
 export function UploadCSV({ onUploadSuccess }) {
   const [file, setFile] = useState(null);
@@ -110,8 +114,16 @@ export function UploadCSV({ onUploadSuccess }) {
   }, [addLog, onUploadSuccess, stopPolling]);
 
   const pollJobStatus = useCallback(async (currentJobId) => {
+    if (!currentJobId) {
+      const message = 'Campaign started, but the server did not return a job ID.';
+      setGlobalError(message);
+      addLog('error', message);
+      stopPolling();
+      return;
+    }
+
     try {
-      addLog('info', `Polling status for job ${currentJobId.slice(0, 8)}...`);
+      addLog('info', `Polling status for job ${formatJobLabel(currentJobId)}...`);
       const data = await api.getJobStatus(currentJobId);
       ingestJobStatus(data);
     } catch (err) {
@@ -119,7 +131,7 @@ export function UploadCSV({ onUploadSuccess }) {
       setGlobalError(`Could not fetch campaign status: ${message}`);
       addLog('error', `Status polling failed: ${message}`, err?.response?.data || {});
     }
-  }, [addLog, ingestJobStatus]);
+  }, [addLog, ingestJobStatus, stopPolling]);
 
   useEffect(() => {
     return () => stopPolling();
@@ -231,16 +243,25 @@ export function UploadCSV({ onUploadSuccess }) {
 
     try {
       const resp = await api.postCSV(file, limit || null, dryRun);
-      setPreflight(resp.preflight || null);
-      setJobId(resp.job_id);
-      setJobStatus('pending');
+      const nextJobId = resp?.job_id ?? resp?.jobId ?? resp?.id ?? null;
 
-      addLog('info', `Campaign queued successfully. Job ID: ${resp.job_id}`, resp);
+      setPreflight(resp.preflight || null);
+      setJobId(nextJobId);
+      setJobStatus(nextJobId ? 'pending' : null);
+
+      if (!nextJobId) {
+        const message = resp?.message || resp?.detail || 'Upload succeeded, but no job ID was returned by the server.';
+        setGlobalError(message);
+        addLog('error', message, resp || {});
+        return;
+      }
+
+      addLog('info', `Campaign queued successfully. Job ID: ${nextJobId}`, resp);
       if (resp.preflight) {
         addLog(resp.preflight.ok ? 'info' : 'error', `Preflight result: ${resp.preflight.summary}`, resp.preflight);
       }
 
-      await pollJobStatus(resp.job_id);
+      await pollJobStatus(nextJobId);
     } catch (err) {
       const detail = err?.response?.data?.detail;
       const message = typeof detail === 'string'
@@ -463,7 +484,7 @@ export function UploadCSV({ onUploadSuccess }) {
                   <XCircle size={14} className="text-red-400 shrink-0" />
                 ) : null}
                 <span className={`text-xs font-mono font-semibold ${statusLabel.color}`}>{statusLabel.text}</span>
-                <span className="ml-auto text-[10px] text-gray-600 font-mono">job: {jobId.slice(0, 8)}...</span>
+                <span className="ml-auto text-[10px] text-gray-600 font-mono">job: {formatJobLabel(jobId)}...</span>
               </div>
 
               {callResults.length > 0 && (
